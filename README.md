@@ -12,19 +12,20 @@ Parte del modelo orientado a objetos de la Práctica 1 (clases `Producto`,
 `Pedido` y `TiendaService`) y expone su funcionalidad como una API REST hecha con
 FastAPI. Los datos de entrada y salida se validan con esquemas Pydantic.
 
-En esta versión los datos se guardan en memoria, dentro de `TiendaService`, y se
-pierden al reiniciar el servidor.
+Los datos se guardan en una base de datos SQLite mediante SQLAlchemy, así que se
+mantienen aunque se reinicie el servidor. Las clases del dominio son a la vez las
+tablas de la base de datos (`usuarios`, `productos`, `pedidos` y `lineas_pedido`).
 
 ## Estructura del proyecto
 
 ```text
-Tienda_online/
 ├── models/
-│   ├── Producto.py        Clases de producto y esquemas ProductoCreate / ProductoRead
-│   ├── Usuario.py         Clases de usuario y esquemas UsuarioCreate / UsuarioRead
-│   └── Pedido.py          Clase Pedido y esquemas de pedido
+│   ├── Producto.py        Clases/tablas de producto y esquemas ProductoCreate / ProductoRead
+│   ├── Usuario.py         Clases/tablas de usuario y esquemas UsuarioCreate / UsuarioRead
+│   └── Pedido.py          Clases/tablas de pedido y sus líneas, y esquemas de pedido
 ├── Services/
-│   └── Tienda_service.py  TiendaService: lógica de la tienda
+│   └── Tienda_service.py  TiendaService: lógica de la tienda sobre la base de datos
+├── database.py            Conexión con SQLite (engine, sesiones y Base de SQLAlchemy)
 ├── main.py                Aplicación FastAPI y endpoints
 └── requirements.txt       Dependencias
 ```
@@ -35,14 +36,20 @@ Tienda_online/
 
 ## Instalación y ejecución
 
+Desde la carpeta del proyecto:
+
 ```bash
-cd Tienda_online
 pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
 La API queda disponible en http://127.0.0.1:8000 y su documentación interactiva
 (Swagger) en http://127.0.0.1:8000/docs.
+
+Al arrancar se crea el fichero `tienda.db` (en la carpeta desde la que se lanza el
+servidor) con las tablas necesarias. Para empezar con la base de datos vacía basta con
+parar el servidor y borrar ese fichero. `tienda.db` no se sube al repositorio
+(está en `.gitignore`).
 
 ## Endpoints
 
@@ -57,6 +64,12 @@ La API queda disponible en http://127.0.0.1:8000 y su documentación interactiva
 | DELETE | `/productos/{producto_id}` | Elimina un producto |
 | POST | `/pedidos` | Crea un pedido comprobando cliente, productos y stock |
 | GET | `/usuarios/{cliente_id}/pedidos` | Lista los pedidos de un cliente |
+
+Los listados admiten parámetros de consulta:
+
+- `GET /usuarios?nombre=juan`: filtra por nombre (coincidencia parcial).
+- `GET /productos?tipo=ropa&nombre=cami`: filtra por tipo y por nombre.
+- `skip` y `limit` en los dos listados para paginar, por ejemplo `?skip=0&limit=10`.
 
 ## Códigos de respuesta
 
