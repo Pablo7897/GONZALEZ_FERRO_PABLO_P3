@@ -2,18 +2,22 @@
 
 from typing import Dict, List, Optional
 
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
 from models.Pedido import Pedido
 from models.Producto import Producto
 from models.Usuario import Administrador, Cliente, Usuario
 
 
 class TiendaService:
-    """Servicio centralizado que gestiona usuarios, productos y pedidos de la tienda."""
+    """Servicio centralizado que gestiona usuarios, productos y pedidos de la tienda.
 
-    def __init__(self) -> None:
-        self.usuarios: Dict[str, Usuario] = {}
-        self.productos: Dict[str, Producto] = {}
-        self.pedidos: List[Pedido] = []
+    Los datos se guardan en la base de datos a traves de la sesion `db` de SQLAlchemy.
+    """
+
+    def __init__(self, db: Session) -> None:
+        self.db = db
 
     def registrar_usuario(self, tipo: str, **atributos) -> Usuario:
         """Registra un nuevo usuario.
@@ -29,43 +33,66 @@ class TiendaService:
         else:
             raise ValueError(f"Tipo de usuario desconocido: {tipo}")
 
-        self.usuarios[usuario.id] = usuario
+        self.db.add(usuario)
+        self.db.commit()
+        self.db.refresh(usuario)
         return usuario
 
     def obtener_usuario(self, usuario_id: str) -> Optional[Usuario]:
         """Devuelve el usuario con ese identificador, o None si no existe."""
-        return self.usuarios.get(usuario_id)
+        return self.db.get(Usuario, usuario_id)
 
     def buscar_usuario_por_email(self, email: str) -> Optional[Usuario]:
         """Devuelve el usuario registrado con ese email, o None si no hay ninguno."""
-        for usuario in self.usuarios.values():
-            if usuario.email.lower() == email.lower():
-                return usuario
-        return None
+        return (
+            self.db.query(Usuario)
+            .filter(func.lower(Usuario.email) == email.lower())
+            .first()
+        )
 
-    def listar_usuarios(self) -> List[Usuario]:
-        """Devuelve la lista de todos los usuarios registrados."""
-        return list(self.usuarios.values())
+    def listar_usuarios(
+        self, nombre: Optional[str] = None, skip: int = 0, limit: int = 100
+    ) -> List[Usuario]:
+        """Devuelve los usuarios registrados, opcionalmente filtrados por nombre."""
+        query = self.db.query(Usuario)
+        if nombre is not None:
+            query = query.filter(Usuario.nombre.ilike(f"%{nombre}%"))
+        return query.offset(skip).limit(limit).all()
 
     def obtener_producto(self, producto_id: str) -> Optional[Producto]:
         """Devuelve el producto con ese identificador, o None si no existe."""
-        return self.productos.get(producto_id)
+        return self.db.get(Producto, producto_id)
 
     def anadir_producto(self, producto: Producto) -> Producto:
         """Añade un producto (de cualquier categoria) al inventario."""
-        self.productos[producto.id] = producto
+        self.db.add(producto)
+        self.db.commit()
+        self.db.refresh(producto)
         return producto
 
     def eliminar_producto(self, producto_id: str) -> bool:
         """Elimina un producto del inventario a partir de su identificador."""
-        if producto_id in self.productos:
-            del self.productos[producto_id]
-            return True
-        return False
+        producto = self.obtener_producto(producto_id)
+        if producto is None:
+            return False
+        self.db.delete(producto)
+        self.db.commit()
+        return True
 
-    def listar_productos(self) -> List[Producto]:
-        """Devuelve la lista de todos los productos disponibles en la tienda."""
-        return list(self.productos.values())
+    def listar_productos(
+        self,
+        tipo: Optional[str] = None,
+        nombre: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> List[Producto]:
+        """Devuelve los productos de la tienda, opcionalmente filtrados por tipo y nombre."""
+        query = self.db.query(Producto)
+        if tipo is not None:
+            query = query.filter(Producto.tipo == tipo)
+        if nombre is not None:
+            query = query.filter(Producto.nombre.ilike(f"%{nombre}%"))
+        return query.offset(skip).limit(limit).all()
 
     def realizar_pedido(self, usuario_id: str, lineas: Dict[str, int]) -> Optional[Pedido]:
         """Realiza un pedido para un usuario cliente.
@@ -78,13 +105,13 @@ class TiendaService:
             El pedido creado, o None si el usuario no existe, no es cliente,
             o no hay stock suficiente de alguno de los productos solicitados.
         """
-        usuario = self.usuarios.get(usuario_id)
+        usuario = self.obtener_usuario(usuario_id)
         if usuario is None or not isinstance(usuario, Cliente):
             return None
 
         productos_solicitados: Dict[Producto, int] = {}
         for producto_id, cantidad in lineas.items():
-            producto = self.productos.get(producto_id)
+            producto = self.obtener_producto(producto_id)
             if producto is None or not producto.hay_stock(cantidad):
                 return None
             productos_solicitados[producto] = cantidad
@@ -92,11 +119,18 @@ class TiendaService:
         for producto, cantidad in productos_solicitados.items():
             producto.actualizar_stock(-cantidad)
 
+        # El pedido y la bajada de stock se guardan juntos en un unico commit
         pedido = Pedido(usuario, productos_solicitados)
-        self.pedidos.append(pedido)
+        self.db.add(pedido)
+        self.db.commit()
+        self.db.refresh(pedido)
         return pedido
 
     def listar_pedidos_usuario(self, usuario_id: str) -> List[Pedido]:
         """Lista todos los pedidos de un usuario ordenados por fecha."""
-        pedidos_usuario = [p for p in self.pedidos if p.cliente.id == usuario_id]
-        return sorted(pedidos_usuario, key=lambda p: p.fecha)
+        return (
+            self.db.query(Pedido)
+            .filter(Pedido.cliente_id == usuario_id)
+            .order_by(Pedido.fecha)
+            .all()
+        )

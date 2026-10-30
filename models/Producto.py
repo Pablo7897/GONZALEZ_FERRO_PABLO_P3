@@ -3,17 +3,34 @@
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from sqlalchemy import Column, Float, Integer, String
+
+from database import Base
 
 
-class Producto:
-    """Clase base que representa un producto generico de la tienda."""
+class Producto(Base):
+    """Clase base que representa un producto generico de la tienda.
+
+    Todos los productos se guardan en la tabla "productos"; la columna `tipo` indica
+    si cada fila es un producto generico, electronico o de ropa (herencia de tabla unica).
+    """
+
+    __tablename__ = "productos"
+
+    id = Column(String, primary_key=True, index=True)
+    nombre = Column(String, nullable=False, index=True)
+    precio = Column(Float, nullable=False)
+    stock = Column(Integer, nullable=False)
+    tipo = Column(String, nullable=False)
+
+    __mapper_args__ = {"polymorphic_on": tipo, "polymorphic_identity": "generico"}
 
     def __init__(self, nombre: str, precio: float, stock: int) -> None:
-        self.id: str = str(uuid.uuid4())  # Genera un ID único para cada producto
-        self.nombre: str = nombre
-        self.precio: float = precio
-        self.stock: int = stock
+        self.id = str(uuid.uuid4())  # Genera un ID único para cada producto
+        self.nombre = nombre
+        self.precio = precio
+        self.stock = stock
 
     def hay_stock(self, cantidad: int) -> bool:
         """Comprueba si hay stock suficiente para la cantidad solicitada."""
@@ -33,9 +50,13 @@ class Producto:
 class ProductoElectronico(Producto):
     """Producto electronico, con meses de garantia."""
 
+    meses_garantia = Column(Integer)
+
+    __mapper_args__ = {"polymorphic_identity": "electronico"}
+
     def __init__(self, nombre: str, precio: float, stock: int, meses_garantia: int) -> None:
         super().__init__(nombre, precio, stock)
-        self.meses_garantia: int = meses_garantia
+        self.meses_garantia = meses_garantia
 
     def __str__(self) -> str:
         return (
@@ -47,10 +68,15 @@ class ProductoElectronico(Producto):
 class ProductoRopa(Producto):
     """Producto de ropa, con talla y color."""
 
+    talla = Column(String)
+    color = Column(String)
+
+    __mapper_args__ = {"polymorphic_identity": "ropa"}
+
     def __init__(self, nombre: str, precio: float, stock: int, talla: str, color: str) -> None:
         super().__init__(nombre, precio, stock)
-        self.talla: str = talla
-        self.color: str = color
+        self.talla = talla
+        self.color = color
 
     def __str__(self) -> str:
         return (
@@ -93,3 +119,6 @@ class ProductoCreate(ProductoBase):
 
 class ProductoRead(ProductoBase):
     id: str
+
+    # Permite crear el esquema directamente a partir de un objeto de SQLAlchemy
+    model_config = ConfigDict(from_attributes=True)

@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Base de datos SQLite: se crea sola al arrancar la API y no se sube al repositorio
+*.db
+
+# Variables de entorno y secretos
+.env

@@ -3,10 +3,14 @@
 Ejecucion desde la carpeta del proyecto: uvicorn main:app --reload
 """
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from typing import Literal
 
-from models.Pedido import Pedido, PedidoCreate, PedidoItemRead, PedidoRead
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+
+from database import Base, SessionLocal, engine
+from models.Pedido import PedidoCreate, PedidoRead
 from models.Producto import (
     Producto,
     ProductoCreate,
@@ -14,8 +18,11 @@ from models.Producto import (
     ProductoRead,
     ProductoRopa,
 )
-from models.Usuario import Cliente, Usuario, UsuarioCreate, UsuarioRead
+from models.Usuario import Cliente, UsuarioCreate, UsuarioRead
 from Services.Tienda_service import TiendaService
+
+# Crear las tablas de la base de datos (tienda.db) si todavia no existen
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Tienda online")
 
@@ -28,64 +35,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Los datos se guardan en memoria: se pierden al reiniciar el servidor
-servicio = TiendaService()
+
+# Dependencia para la sesión de la base de datos
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
-# Conversion de las clases de dominio a los esquemas de salida
-
-def usuario_a_schema(usuario: Usuario) -> UsuarioRead:
-    return UsuarioRead(
-        id=usuario.id,
-        nombre=usuario.nombre,
-        email=usuario.email,
-        es_admin=usuario.is_admin(),
-    )
-
-
-def producto_a_schema(producto: Producto) -> ProductoRead:
-    if isinstance(producto, ProductoElectronico):
-        tipo = "electronico"
-    elif isinstance(producto, ProductoRopa):
-        tipo = "ropa"
-    else:
-        tipo = "generico"
-    return ProductoRead(
-        id=producto.id,
-        tipo=tipo,
-        nombre=producto.nombre,
-        precio=producto.precio,
-        stock=producto.stock,
-        meses_garantia=getattr(producto, "meses_garantia", None),
-        talla=getattr(producto, "talla", None),
-        color=getattr(producto, "color", None),
-    )
-
-
-def pedido_a_schema(pedido: Pedido) -> PedidoRead:
-    items = [
-        PedidoItemRead(
-            producto_id=producto.id,
-            nombre=producto.nombre,
-            precio_unitario=producto.precio,
-            cantidad=cantidad,
-            subtotal=round(producto.precio * cantidad, 2),
-        )
-        for producto, cantidad in pedido.lineas.items()
-    ]
-    return PedidoRead(
-        id=pedido.id,
-        fecha=pedido.fecha,
-        cliente_id=pedido.cliente.id,
-        total=round(pedido.calcular_total(), 2),
-        items=items,
-    )
+# Dependencia que crea el servicio de la tienda con la sesion de cada peticion
+def get_servicio(db: Session = Depends(get_db)) -> TiendaService:
+    return TiendaService(db)
 
 
 # Endpoints de usuarios
 
 @app.post("/usuarios", response_model=UsuarioRead, status_code=201)
-def create_usuario(usuario: UsuarioCreate):
+def create_usuario(usuario: UsuarioCreate, servicio: TiendaService = Depends(get_servicio)):
     if servicio.buscar_usuario_por_email(usuario.email) is not None:
         raise HTTPException(status_code=409, detail="Ya existe un usuario con ese email")
 
@@ -94,29 +62,33 @@ def create_usuario(usuario: UsuarioCreate):
         atributos["direccion"] = usuario.direccion
 
     try:
-        nuevo_usuario = servicio.registrar_usuario(usuario.tipo, **atributos)
+        return servicio.registrar_usuario(usuario.tipo, **atributos)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
-    return usuario_a_schema(nuevo_usuario)
 
 
 @app.get("/usuarios", response_model=list[UsuarioRead])
-def read_usuarios():
-    return [usuario_a_schema(usuario) for usuario in servicio.listar_usuarios()]
+def read_usuarios(
+    skip: int = 0,
+    limit: int = 100,
+    nombre: str | None = None,
+    servicio: TiendaService = Depends(get_servicio),
+):
+    return servicio.listar_usuarios(nombre=nombre, skip=skip, limit=limit)
 
 
 @app.get("/usuarios/{usuario_id}", response_model=UsuarioRead)
-def read_usuario(usuario_id: str):
+def read_usuario(usuario_id: str, servicio: TiendaService = Depends(get_servicio)):
     usuario = servicio.obtener_usuario(usuario_id)
     if usuario is None:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    return usuario_a_schema(usuario)
+    return usuario
 
 
 # Endpoints de productos
 
 @app.post("/productos", response_model=ProductoRead, status_code=201)
-def create_producto(producto: ProductoCreate):
+def create_producto(producto: ProductoCreate, servicio: TiendaService = Depends(get_servicio)):
     if producto.tipo == "electronico":
         nuevo_producto = ProductoElectronico(
             producto.nombre, producto.precio, producto.stock,
@@ -130,25 +102,30 @@ def create_producto(producto: ProductoCreate):
     else:
         nuevo_producto = Producto(producto.nombre, producto.precio, producto.stock)
 
-    servicio.anadir_producto(nuevo_producto)
-    return producto_a_schema(nuevo_producto)
+    return servicio.anadir_producto(nuevo_producto)
 
 
 @app.get("/productos", response_model=list[ProductoRead])
-def read_productos():
-    return [producto_a_schema(producto) for producto in servicio.listar_productos()]
+def read_productos(
+    skip: int = 0,
+    limit: int = 100,
+    tipo: Literal["generico", "electronico", "ropa"] | None = None,
+    nombre: str | None = None,
+    servicio: TiendaService = Depends(get_servicio),
+):
+    return servicio.listar_productos(tipo=tipo, nombre=nombre, skip=skip, limit=limit)
 
 
 @app.get("/productos/{producto_id}", response_model=ProductoRead)
-def read_producto(producto_id: str):
+def read_producto(producto_id: str, servicio: TiendaService = Depends(get_servicio)):
     producto = servicio.obtener_producto(producto_id)
     if producto is None:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
-    return producto_a_schema(producto)
+    return producto
 
 
 @app.delete("/productos/{producto_id}")
-def delete_producto(producto_id: str):
+def delete_producto(producto_id: str, servicio: TiendaService = Depends(get_servicio)):
     result = servicio.eliminar_producto(producto_id)
     if not result:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -157,7 +134,7 @@ def delete_producto(producto_id: str):
 
 # Endpoints de pedidos
 
-def get_cliente(cliente_id: str) -> Cliente:
+def get_cliente(cliente_id: str, servicio: TiendaService) -> Cliente:
     """Devuelve el cliente indicado o lanza el error HTTP que corresponda."""
     usuario = servicio.obtener_usuario(cliente_id)
     if usuario is None:
@@ -168,8 +145,8 @@ def get_cliente(cliente_id: str) -> Cliente:
 
 
 @app.post("/pedidos", response_model=PedidoRead, status_code=201)
-def create_pedido(pedido: PedidoCreate):
-    cliente = get_cliente(pedido.cliente_id)
+def create_pedido(pedido: PedidoCreate, servicio: TiendaService = Depends(get_servicio)):
+    cliente = get_cliente(pedido.cliente_id, servicio)
 
     # Si un producto viene repetido en varias lineas se suman sus cantidades
     lineas: dict[str, int] = {}
@@ -189,10 +166,10 @@ def create_pedido(pedido: PedidoCreate):
     nuevo_pedido = servicio.realizar_pedido(cliente.id, lineas)
     if nuevo_pedido is None:
         raise HTTPException(status_code=400, detail="No se ha podido realizar el pedido")
-    return pedido_a_schema(nuevo_pedido)
+    return nuevo_pedido
 
 
 @app.get("/usuarios/{cliente_id}/pedidos", response_model=list[PedidoRead])
-def read_pedidos_cliente(cliente_id: str):
-    cliente = get_cliente(cliente_id)
-    return [pedido_a_schema(pedido) for pedido in servicio.listar_pedidos_usuario(cliente.id)]
+def read_pedidos_cliente(cliente_id: str, servicio: TiendaService = Depends(get_servicio)):
+    cliente = get_cliente(cliente_id, servicio)
+    return servicio.listar_pedidos_usuario(cliente.id)
