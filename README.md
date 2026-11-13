@@ -16,6 +16,9 @@ Los datos se guardan en una base de datos SQLite mediante SQLAlchemy, así que s
 mantienen aunque se reinicie el servidor. Las clases del dominio son a la vez las
 tablas de la base de datos (`usuarios`, `productos`, `pedidos` y `lineas_pedido`).
 
+Incluye además un frontend web para usar la API desde el navegador y un `dockerfile`
+para ejecutar la API dentro de un contenedor Docker.
+
 ## Estructura del proyecto
 
 ```text
@@ -25,8 +28,13 @@ tablas de la base de datos (`usuarios`, `productos`, `pedidos` y `lineas_pedido`
 │   └── Pedido.py          Clases/tablas de pedido y sus líneas, y esquemas de pedido
 ├── Services/
 │   └── Tienda_service.py  TiendaService: lógica de la tienda sobre la base de datos
+├── frontend/
+│   ├── index.html         Página web de la tienda
+│   ├── styles.css         Estilos
+│   └── app.js             Llamadas a la API con fetch y lógica de la interfaz
 ├── database.py            Conexión con SQLite (engine, sesiones y Base de SQLAlchemy)
 ├── main.py                Aplicación FastAPI y endpoints
+├── dockerfile             Instrucciones para construir la imagen Docker de la API
 └── requirements.txt       Dependencias
 ```
 
@@ -50,6 +58,47 @@ Al arrancar se crea el fichero `tienda.db` (en la carpeta desde la que se lanza 
 servidor) con las tablas necesarias. Para empezar con la base de datos vacía basta con
 parar el servidor y borrar ese fichero. `tienda.db` no se sube al repositorio
 (está en `.gitignore`).
+
+## Ejecución con Docker
+
+También se puede ejecutar la API en un contenedor, sin instalar Python ni las
+dependencias. Hace falta tener Docker instalado (en Windows, Docker Desktop).
+
+Desde la carpeta del proyecto, primero se construye la imagen a partir del `dockerfile`:
+
+```bash
+docker build -t tienda:1.0 .
+```
+
+Después se crea y arranca un contenedor a partir de esa imagen:
+
+```bash
+docker run -d --name tienda -p 8000:8000 tienda:1.0
+```
+
+La API queda disponible igual que antes, en http://localhost:8000/docs. Dentro del
+contenedor uvicorn escucha en `0.0.0.0`, y la opción `-p 8000:8000` conecta el puerto
+8000 del equipo con el del contenedor.
+
+Para pararlo y volver a arrancarlo:
+
+```bash
+docker stop tienda
+docker start tienda
+```
+
+La base de datos `tienda.db` se guarda dentro del contenedor: se mantiene al pararlo,
+pero se pierde si se borra el contenedor con `docker rm tienda`.
+
+## Frontend
+
+Con la API arrancada (en local o con Docker), basta con abrir `frontend/index.html` en
+el navegador. Desde ahí se pueden ver, crear y eliminar productos, registrar usuarios y
+hacer pedidos.
+
+La dirección de la API se puede cambiar en la cabecera de la página (por defecto
+`http://localhost:8000`). La API tiene CORS activado para que el navegador le permita
+al frontend hacer las peticiones.
 
 ## Endpoints
 
